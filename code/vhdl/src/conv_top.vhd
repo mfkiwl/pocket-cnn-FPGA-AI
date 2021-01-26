@@ -7,7 +7,7 @@ library util;
   use util.array_pkg.all;
   use util.math_pkg.all;
 
-library window_buffer_lib;
+library window_ctrl_lib;
 
 entity conv_top is
   generic (
@@ -56,7 +56,7 @@ architecture behavioral of conv_top is
 
 begin
 
-  i_window_ctrl : entity window_buffer_lib.window_ctrl
+  i_window_ctrl : entity window_ctrl_lib.window_ctrl
     generic map (
       C_BITWIDTH            => C_DATA_TOTAL_BITS,
 
@@ -100,6 +100,7 @@ begin
     )
     port map (
       isl_clk    => isl_clk,
+      isl_start  => isl_start,
       isl_valid  => sl_win_valid_out,
       ia_data    => a_win_data_out,
       ia_weights => a_weights,
@@ -111,20 +112,19 @@ begin
     a_weights(ch_in) <= C_WEIGHTS(int_addr_cnt + ch_in);
   end generate gen_weights;
 
-  proc_data : process (isl_clk) is
-  begin
-
-    if (rising_edge(isl_clk)) then
+  i_address_counter : entity util.basic_counter
+    generic map (
+      C_MAX => C_CH_IN * C_CH_OUT,
+      C_INCREMENT => C_PARALLEL_CH,
+      C_COUNT_DOWN => 0
+    )
+    port map (
+      isl_clk     => isl_clk,
+      isl_reset   => '0',
       -- weight addresses depend on window control
-      if (sl_win_valid_out = '1') then
-        if (int_addr_cnt < C_CH_IN * C_CH_OUT - C_PARALLEL_CH) then
-          int_addr_cnt <= int_addr_cnt + C_PARALLEL_CH;
-        else
-          int_addr_cnt <= 0;
-        end if;
-      end if;
-    end if;
-
-  end process proc_data;
+      isl_valid   => sl_win_valid_out,
+      oint_count  => int_addr_cnt,
+      osl_maximum => open
+    );
 
 end architecture behavioral;

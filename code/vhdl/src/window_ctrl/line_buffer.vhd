@@ -7,8 +7,6 @@ library util;
   use util.array_pkg.all;
   use util.math_pkg.all;
 
-library window_buffer_lib;
-
 entity line_buffer is
   generic (
     C_BITWIDTH : integer range 1 to 64 := 8;
@@ -44,7 +42,7 @@ architecture behavioral of line_buffer is
 
 begin
 
-  i_bram : entity window_buffer_lib.bram
+  i_bram : entity util.bram
     generic map (
       C_DATA_WIDTH => C_BRAM_DATA_WIDTH,
       C_ADDR_WIDTH => C_BRAM_ADDR_WIDTH,
@@ -75,7 +73,7 @@ begin
 
     if (rising_edge(isl_clk)) then
       if (isl_valid = '1') then
-        if (usig_addr_cnt < C_BRAM_SIZE - 2) then
+        if (usig_addr_cnt /= C_BRAM_SIZE - 2) then
           usig_addr_cnt <= usig_addr_cnt + 1;
         else
           usig_addr_cnt <= (others => '0');

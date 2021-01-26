@@ -66,7 +66,6 @@ architecture behavioral of pe is
   -- maxpool
   signal slv_pool_data_in : std_logic_vector(C_DATA_TOTAL_BITS - 1 downto 0);
   signal sl_pool_valid_in : std_logic := '0';
-  signal sl_pool_rdy      : std_logic := '0';
 
   -- output buffer
   signal slv_output_buffer_data_in : std_logic_vector(C_DATA_TOTAL_BITS - 1 downto 0);
@@ -81,39 +80,25 @@ architecture behavioral of pe is
 
 begin
 
-  proc_cnt : process (isl_clk) is
-  begin
+  -- synthesis translate off
+  i_pixel_counter : entity util.pixel_counter(single_process)
+    generic map (
+      C_HEIGHT  => C_IMG_HEIGHT,
+      C_WIDTH   => C_IMG_WIDTH,
+      C_CHANNEL => C_CH_IN,
+      C_CHANNEL_INCREMENT => C_PARALLEL_CH
+    )
+    port map (
+      isl_clk      => isl_clk,
+      isl_reset    => isl_start,
+      isl_valid    => isl_valid,
+      oint_pixel   => int_pixel_in_cnt,
+      oint_row     => int_row,
+      oint_column  => int_col,
+      oint_channel => int_ch_in_cnt
+    );
 
-    if (rising_edge(isl_clk)) then
-      if (isl_start = '1') then
-        -- have to be resetted at start because of odd kernels (3x3+2) -> image dimensions arent fitting kernel stride
-        int_pixel_in_cnt <= 0;
-        int_ch_in_cnt    <= 0;
-        int_col          <= 0;
-        int_row          <= 0;
-      else
-        if (isl_valid = '1') then
-          if (int_ch_in_cnt < C_CH_IN - 1) then
-            int_ch_in_cnt <= int_ch_in_cnt + 1;
-          else
-            int_ch_in_cnt    <= 0;
-            int_pixel_in_cnt <= int_pixel_in_cnt + 1;
-            if (int_col < C_IMG_WIDTH - 1) then
-              int_col <= int_col + 1;
-            else
-              int_col <= 0;
-              if (int_row < C_IMG_HEIGHT - 1) then
-                int_row <= int_row + 1;
-              else
-                int_row <= 0;
-              end if;
-            end if;
-          end if;
-        end if;
-      end if;
-    end if;
-
-  end process proc_cnt;
+  -- synthesis translate on
 
   -- zero padding
 
@@ -180,7 +165,6 @@ begin
     );
 
   gen_no_relu_no_pool : if C_RELU = '0' and C_POOL_KSIZE = 0 generate
-    sl_pool_rdy               <= '1';
     slv_output_buffer_data_in <= slv_conv_data_out;
     sl_output_buffer_valid_in <= sl_conv_valid_out;
   end generate gen_no_relu_no_pool;
@@ -205,7 +189,6 @@ begin
     -- assign relu outputs
 
     gen_relu_no_pool : if C_POOL_KSIZE = 0 generate
-      sl_pool_rdy               <= '1';
       slv_output_buffer_data_in <= slv_relu_data_out;
       sl_output_buffer_valid_in <= sl_relu_valid_out;
     else generate
@@ -235,8 +218,7 @@ begin
         isl_valid => sl_pool_valid_in,
         islv_data => slv_pool_data_in,
         oslv_data => slv_output_buffer_data_in,
-        osl_valid => sl_output_buffer_valid_in,
-        osl_rdy   => sl_pool_rdy
+        osl_valid => sl_output_buffer_valid_in
       );
 
     gen_pool_no_relu : if C_RELU = '0' generate
@@ -246,7 +228,7 @@ begin
 
   end generate gen_pool;
 
-  i_output_buffer : entity work.output_buffer
+  i_output_buffer : entity util.output_buffer
     generic map (
       C_TOTAL_BITS  => C_DATA_TOTAL_BITS,
       C_CH          => C_CH_OUT
@@ -254,6 +236,7 @@ begin
     port map (
       isl_clk   => isl_clk,
       isl_get   => isl_get,
+      isl_start => isl_start,
       isl_valid => sl_output_buffer_valid_in,
       islv_data => slv_output_buffer_data_in,
       oslv_data => oslv_data,

@@ -5,7 +5,10 @@ library ieee;
 library util;
   use util.array_pkg.all;
 
-library window_buffer_lib;
+library window_ctrl_lib;
+
+-- Maximum pooling can process new data every cycle, i. e. is fully pipelined.
+-- Thus, no ready signal is needed
 
 entity max_top is
   generic (
@@ -25,8 +28,7 @@ entity max_top is
     isl_valid : in    std_logic;
     islv_data : in    std_logic_vector(C_TOTAL_BITS - 1 downto 0);
     oslv_data : out   std_logic_vector(C_TOTAL_BITS - 1 downto 0);
-    osl_valid : out   std_logic;
-    osl_rdy   : out   std_logic
+    osl_valid : out   std_logic
   );
 end entity max_top;
 
@@ -38,7 +40,7 @@ architecture behavioral of max_top is
 
 begin
 
-  i_window_ctrl : entity window_buffer_lib.window_ctrl
+  i_window_ctrl : entity window_ctrl_lib.window_ctrl
     generic map (
       C_BITWIDTH        => C_TOTAL_BITS,
 
@@ -58,7 +60,7 @@ begin
       islv_data => islv_data,
       oslv_data => slv_win_data_out,
       osl_valid => slv_win_valid_out,
-      osl_rdy   => osl_rdy
+      osl_rdy   => open
     );
 
   a_win_data_out <= slv_to_array(slv_win_data_out, 1, C_KSIZE);

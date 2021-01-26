@@ -14,6 +14,7 @@ entity output_buffer is
   port (
     isl_clk   : in    std_logic;
     isl_get   : in    std_logic;
+    isl_start : in    std_logic;
     isl_valid : in    std_logic;
     islv_data : in    std_logic_vector(C_TOTAL_BITS - 1 downto 0);
     oslv_data : out   std_logic_vector(C_TOTAL_BITS - 1 downto 0);
@@ -44,6 +45,18 @@ architecture behavioral of output_buffer is
 
 begin
 
+  i_channel_counter : entity util.basic_counter
+    generic map (
+      C_MAX => C_CH
+    )
+    port map (
+      isl_clk     => isl_clk,
+      isl_reset   => isl_start,
+      isl_valid   => isl_valid,
+      oint_count  => open,
+      osl_maximum => sl_buffer_rdy
+    );
+
   -- buffer one full pixel
   -- send only when the next module is ready
   -- new input will be also buffered when output is sent
@@ -51,16 +64,8 @@ begin
   begin
 
     if (rising_edge(isl_clk)) then
-      sl_buffer_rdy <= '0';
       if (isl_valid = '1') then
         a_buffer_in <= a_buffer_in(1 to a_buffer_in'HIGH) & islv_data;
-
-        if (int_input_cnt < C_CH - 1) then
-          int_input_cnt <= int_input_cnt + 1;
-        else
-          int_input_cnt <= 0;
-          sl_buffer_rdy <= '1';
-        end if;
       end if;
 
       case state is
@@ -80,7 +85,7 @@ begin
         when SEND =>
           a_buffer_out <= a_buffer_out(1 to a_buffer_out'HIGH) & a_buffer_out(0);
 
-          if (int_output_cnt < C_CH - 1) then
+          if (int_output_cnt /= C_CH - 1) then
             int_output_cnt <= int_output_cnt + 1;
           else
             int_output_cnt <= 0;

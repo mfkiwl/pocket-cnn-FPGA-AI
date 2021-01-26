@@ -15,20 +15,19 @@ cd build
 # analyze the sources
 SRC="$ROOT/../code/vhdl/src"
 
-# utilities
+# utilities and helper modules
 ghdl -a --std=08 --work=util "$SRC/util/array_pkg.vhd"
 ghdl -a --std=08 --work=util "$SRC/util/math_pkg.vhd"
+ghdl -a --std=08 --work=util "$SRC/util/bram.vhd"
+ghdl -a --std=08 --work=util "$SRC/util/basic_counter.vhd"
+ghdl -a --std=08 --work=util "$SRC/util/pixel_counter.vhd"
+ghdl -a --std=08 --work=util "$SRC/util/output_buffer.vhd"
 
 # window buffer
-ghdl -a --std=08 --work=window_buffer_lib "$ROOT/../submodules/window-buffer/src/bram.vhd"
-ghdl -a --std=08 --work=window_buffer_lib "$ROOT/../submodules/window-buffer/src/channel_repeater.vhd"
-ghdl -a --std=08 --work=window_buffer_lib "$ROOT/../submodules/window-buffer/src/line_buffer.vhd"
-ghdl -a --std=08 --work=window_buffer_lib "$ROOT/../submodules/window-buffer/src/window_buffer.vhd"
-ghdl -a --std=08 --work=window_buffer_lib "$ROOT/../submodules/window-buffer/src/window_ctrl.vhd"
-
-# helper modules
-ghdl -a --std=08 --work=cnn_lib "$SRC/bram.vhd"
-ghdl -a --std=08 --work=cnn_lib "$SRC/output_buffer.vhd"
+ghdl -a --std=08 --work=window_ctrl_lib "$SRC/window_ctrl/channel_repeater.vhd"
+ghdl -a --std=08 --work=window_ctrl_lib "$SRC/window_ctrl/line_buffer.vhd"
+ghdl -a --std=08 --work=window_ctrl_lib "$SRC/window_ctrl/window_buffer.vhd"
+ghdl -a --std=08 --work=window_ctrl_lib "$SRC/window_ctrl/window_ctrl.vhd"
 
 # smaller layers (relu, zero padding, average pooling)
 ghdl -a --std=08 --work=cnn_lib "$SRC/relu.vhd"

@@ -4,44 +4,43 @@
 import itertools
 import math
 from os.path import join, dirname
-from random import randint
 
 import numpy as np
 
-from fixfloat import v_float2fixedint, float2fixedint
-from fixfloat import random_fixed_array
+from fpbinary import OverflowEnum
+from fp_helper import random_fixed_array, to_fixedint, v_to_fixedint, Bitwidth
 
 
-def create_stimuli(root, stage, ksize, total_bits_data, frac_bits_data,
-                   total_bits_weight, frac_bits_weight):
+def create_stimuli(root, stage, ksize, bitwidth_data, bitwidth_weights):
     # vunit import from csv can only handle datatype integer.
     # Therefore the random fixed point values have to be converted to
     # corresponding integer values.
-    int_bits_data = total_bits_data - frac_bits_data
-    a_rand = random_fixed_array(
-        (ksize, ksize), int_bits_data, frac_bits_data, signed=stage != 1)
+    a_rand = random_fixed_array((ksize,) * 2, bitwidth_data, signed=stage != 1)
     # manually extend the bitwidth to implicitly create unsigned values
     sign_bit = 1 if stage == 1 else 0
-    a_in = v_float2fixedint(a_rand, int_bits_data + sign_bit, frac_bits_data)
+    a_in = v_to_fixedint(a_rand)
     name = "input_data%s.csv" % ("_stage1" if stage == 1 else str(ksize))
     np.savetxt(join(root, "src", name), a_in, delimiter=", ", fmt="%3d")
 
-    int_bits_weight = total_bits_weight - frac_bits_weight
-    a_weights_rand = random_fixed_array(
-        (ksize, ksize), int_bits_weight, frac_bits_weight)
-    a_weights_in = v_float2fixedint(
-        a_weights_rand, int_bits_weight, frac_bits_weight)
+    a_weights_rand = random_fixed_array((ksize, ksize), bitwidth_weights)
+    a_weights_in = v_to_fixedint(a_weights_rand)
     name = "input_weights%s.csv" % ("_stage1" if stage == 1 else str(ksize))
     np.savetxt(join(root, "src", name), a_weights_in,
                delimiter=", ", fmt="%3d")
 
-    sum_ = np.sum(a_rand * a_weights_rand)
-
+    product = a_rand * a_weights_rand
     additions = 0 if ksize == 1 else int(math.log2(ksize - 1) * 2)
+    # TODO: replace for loop
+    for value in product.flat:
+        # No rounding needed for resize.
+        # The range is covered by "additions + 1 + sign_bit"
+        value.resize(
+            (value.format[0] + additions + 1 + sign_bit, value.format[1]),
+            OverflowEnum.excep)
+    sum_ = np.sum(product)
+
     # use atleast_1d to fulfill 1d requirement of savetxt
-    a_out = np.atleast_1d(float2fixedint(
-        sum_, int_bits_data + int_bits_weight + additions + 1 + sign_bit,
-        frac_bits_data+frac_bits_weight))
+    a_out = np.atleast_1d(to_fixedint(sum_))
     name = "output%s.csv" % ("_stage1" if stage == 1 else str(ksize))
     np.savetxt(join(root, "src", name), a_out, delimiter=", ", fmt="%d")
 
@@ -55,20 +54,17 @@ def create_test_suite(test_lib):
         if ksize != 3 and stage == 1:
             # only test both stage possibilities for ksize = 3
             continue
-        total_bits_data = 8
-        frac_bits_data = randint(0, total_bits_data-1)
-        total_bits_weight = 8
-        frac_bits_weight = randint(0, total_bits_weight-1)
-        generics = {"C_FIRST_STAGE": int(stage == 1),
-                    "C_DATA_TOTAL_BITS": total_bits_data,
-                    "C_DATA_FRAC_BITS_IN": frac_bits_data,
-                    "C_WEIGHTS_TOTAL_BITS": total_bits_weight,
-                    "C_WEIGHTS_FRAC_BITS": frac_bits_weight,
-                    "C_KSIZE": ksize}
-        tb_mm.add_config(name="stage=%d_dim=%d" % (stage, ksize),
-                         generics=generics,
-                         pre_config=create_stimuli(root, stage, ksize,
-                                                   total_bits_data,
-                                                   frac_bits_data,
-                                                   total_bits_weight,
-                                                   frac_bits_weight))
+        bitwidth_data = Bitwidth(total_bits=8)
+        bitwidth_weights = Bitwidth(total_bits=8)
+        generics = {
+            "C_FIRST_STAGE": int(stage == 1),
+            "C_DATA_TOTAL_BITS": bitwidth_data.total_bits,
+            "C_DATA_FRAC_BITS_IN": bitwidth_data.frac_bits,
+            "C_WEIGHTS_TOTAL_BITS": bitwidth_weights.total_bits,
+            "C_WEIGHTS_FRAC_BITS": bitwidth_weights.frac_bits,
+            "C_KSIZE": ksize,
+        }
+        tb_mm.add_config(
+            name="stage=%d_dim=%d" % (stage, ksize), generics=generics,
+            pre_config=create_stimuli(
+                root, stage, ksize, bitwidth_data, bitwidth_weights))

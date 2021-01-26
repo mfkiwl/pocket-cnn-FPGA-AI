@@ -74,7 +74,9 @@ architecture behavioral of top is
       v_int_size_conv := (v_a_size(i - 1) + 2 * C_PAD(i - 1) - C_CONV_KSIZE(i - 1)) /
                          C_CONV_STRIDE(i - 1) + 1;
 
-      if (C_POOL_STRIDE(i - 1) > 0) then
+      assert C_POOL_STRIDE(i - 1) >= 0;
+
+      if (C_POOL_STRIDE(i - 1) /= 0) then
         v_a_size(i) := (v_int_size_conv - C_POOL_KSIZE(i - 1)) /
                        C_POOL_STRIDE(i - 1) + 1;
       else
@@ -98,7 +100,6 @@ architecture behavioral of top is
   signal slv_rdy : std_logic_vector(1 to C_PE + 1) := (others => '0');
 
   -- signals for finish interrupt
-  signal int_data_out_cnt : integer range 0 to C_CH(C_CH'RIGHT) := 0;
   signal sl_output_finish : std_logic := '0';
 
   function f_is_first_stage (stage : in integer range 1 to 100) return integer is
@@ -184,27 +185,24 @@ begin
   --------------------------------------------------------------
   -- Process: Generate finish signal for interrupt
   --------------------------------------------------------------
-  finish_proc : process (isl_clk) is
-  begin
-
-    if (rising_edge(isl_clk)) then
-      if (sl_output_valid(C_PE + 1) = '1') then
-        int_data_out_cnt <= int_data_out_cnt + 1;
-      end if;
-      if (int_data_out_cnt < C_CH(C_CH'RIGHT)) then
-        sl_output_finish <= '0';
-      else
-        sl_output_finish <= '1';
-        int_data_out_cnt <= 0;
-      end if;
-    end if;
-
-  end process finish_proc;
+  i_finish_generator : entity util.basic_counter
+    generic map (
+      C_MAX => C_CH(C_CH'RIGHT)
+    )
+    port map (
+      isl_clk     => isl_clk,
+      isl_reset   => isl_start,
+      isl_valid   => sl_output_valid(C_PE + 1),
+      oint_count  => open,
+      osl_maximum => sl_output_finish
+    );
 
   osl_finish <= sl_output_finish;
   oslv_data  <= a_data_out(C_PE + 1);
   osl_valid  <= sl_output_valid(C_PE + 1);
-  osl_rdy    <= (slv_rdy(1) and isl_get and not isl_valid) when (int_data_out_cnt < C_CH(C_CH'RIGHT)) else
-                '0';
+  -- Ready signal needs to be delayed by one cycle to prevent too much input data (at one input channel).
+  osl_rdy <= (slv_rdy(1) and isl_get and not isl_valid)
+             when (sl_output_finish = '0') else
+             '0';
 
 end architecture behavioral;

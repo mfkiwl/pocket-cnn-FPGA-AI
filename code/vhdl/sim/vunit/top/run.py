@@ -8,11 +8,13 @@ import numpy as np
 import onnx
 # import onnxruntime as rt
 
+from common import InconsistencyError
 import cnn_onnx.inference
 import cnn_onnx.model_zoo
 import cnn_onnx.parse_param
 import cnn_onnx.convert_weights
 from cnn_reference import flatten
+from fp_helper import random_fixed_array, v_to_fixedint, Bitwidth
 import vhdl_top_template
 
 
@@ -20,8 +22,9 @@ def create_stimuli(root, model_name):
     model = onnx.load(join(root, model_name))
     shape = cnn_onnx.parse_param.get_input_shape(model)
 
-    in_ = np.random.randint(256, size=shape, dtype=np.uint8)
-    out_ = cnn_onnx.inference.numpy_inference(model, in_)
+    a_rand = random_fixed_array(shape, Bitwidth(8, 8, 0), signed=False)
+    a_in = v_to_fixedint(a_rand)
+    a_out = v_to_fixedint(cnn_onnx.inference.numpy_inference(model, a_rand))
 
     # ONNX runtime prediction, TODO: doesn't work right now
     # https://github.com/microsoft/onnxruntime/issues/2964
@@ -30,9 +33,9 @@ def create_stimuli(root, model_name):
     # pred_onnx = sess.run(None, {input_name: in_.astype(np.float32)})[0]
     # print(pred_onnx)
 
-    np.savetxt(join(root, "input.csv"), flatten(in_),
+    np.savetxt(join(root, "input.csv"), flatten(a_in),
                delimiter=", ", fmt="%3d")
-    np.savetxt(join(root, "output.csv"), out_,
+    np.savetxt(join(root, "output.csv"), a_out,
                delimiter=", ", fmt="%3d")
 
 
@@ -60,7 +63,7 @@ def create_test_suite(test_lib):
         cnn_onnx.model_zoo.conv_2x1_1x1_max_3x2,
         cnn_onnx.model_zoo.conv_3x3_2x2_1x1,
         cnn_onnx.model_zoo.conv_5x1_1x1_max_2x2,
-        # cnn_onnx.model_zoo.conv_4x3x1_1x1,
+        cnn_onnx.model_zoo.conv_4x3x1_1x1,
         cnn_onnx.model_zoo.conv_2x_3x1_1x1_max_2x2,
         # cnn_onnx.model_zoo.conv_2x_3x1_1x1_max_2x2_padding,
         # cnn_onnx.model_zoo.conv_2x_3x1_1x1_max_2x2_mt
@@ -96,8 +99,14 @@ def create_test_suite(test_lib):
                    for name in params["conv_names"]]
         bias = ["%s/B_%s.txt" % (params["weight_dir"], name)
                 for name in params["conv_names"]]
-        assert len(weights[0]) == params["len_weights"]
-        assert len(bias[0]) == params["len_weights"]
+        if len(weights[0]) != params["len_weights"]:
+            raise InconsistencyError(
+                f"Size of weights doesn't fit. "
+                f"{len(weights[0])} != {params['len_weights']}.")
+        if len(bias[0]) != params["len_weights"]:
+            raise InconsistencyError(
+                f"Size of bias doesn't fit. "
+                f"{len(bias[0])} != {params['len_weights']}.")
 
         bitwidth = "; ".join([", ".join(str(item) for item in inner)
                               for inner in params["bitwidth"]])

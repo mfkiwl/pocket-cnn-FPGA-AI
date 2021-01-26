@@ -8,7 +8,7 @@ library ieee;
 library util;
   use util.array_pkg.all;
 
-library window_buffer_lib;
+library window_ctrl_lib;
 
 entity window_ctrl is
   generic (
@@ -41,16 +41,10 @@ end entity window_ctrl;
 
 architecture behavioral of window_ctrl is
 
-  signal isl_valid_d1 : std_logic := '0';
-
   -- counter
-  signal int_col            : integer range 0 to C_IMG_WIDTH - 1 := 0;
-  signal int_row            : integer range 0 to C_IMG_HEIGHT - 1 := 0;
-  signal int_ch_in_cnt      : integer range 0 to C_CH_IN - 1 := 0;
-  signal int_ch_out_cnt     : integer range 0 to C_CH_IN - 1 := 0;
-  signal int_repetition_cnt : integer range 0 to C_CH_OUT - 1 := 0;
-  signal int_pixel_in_cnt   : integer range 0 to C_IMG_HEIGHT * C_IMG_WIDTH := 0;
-  signal int_pixel_out_cnt  : integer range 0 to C_IMG_HEIGHT * C_IMG_WIDTH := 0;
+  signal int_col       : integer range 0 to C_IMG_WIDTH - 1 := 0;
+  signal int_row       : integer range 0 to C_IMG_HEIGHT - 1 := 0;
+  signal int_pixel_cnt : integer range 0 to C_IMG_HEIGHT * C_IMG_WIDTH := 0;
 
   -- for line buffer
   signal sl_lb_valid_out : std_logic := '0';
@@ -61,11 +55,13 @@ architecture behavioral of window_ctrl is
   signal a_wb_data_out   : t_slv_array_2d(0 to C_KERNEL_SIZE - 1, 0 to C_KERNEL_SIZE - 1) := (others => (others => (others => '0')));
 
   -- for selector
-  signal sl_selector_valid_in  : std_logic := '0';
-  signal sl_selector_valid_out : std_logic := '0';
-  signal a_selector_data_in    : t_slv_array_2d(0 to C_KERNEL_SIZE - 1, 0 to C_KERNEL_SIZE - 1) := (others => (others => (others => '0')));
-  signal a_selector_data_out   : t_slv_array_2d(0 to C_KERNEL_SIZE - 1, 0 to C_KERNEL_SIZE - 1) := (others => (others => (others => '0')));
-  signal sl_selector_rdy       : std_logic := '0';
+  signal sl_flush                 : std_logic := '0';
+  signal sl_selector_valid_in     : std_logic := '0';
+  signal sl_selector_valid_out    : std_logic := '0';
+  signal sl_selector_valid_out_d1 : std_logic := '0';
+  signal sl_selector_valid_out_d2 : std_logic := '0';
+  signal a_selector_data_in       : t_slv_array_2d(0 to C_KERNEL_SIZE - 1, 0 to C_KERNEL_SIZE - 1) := (others => (others => (others => '0')));
+  signal a_selector_data_out      : t_slv_array_2d(0 to C_KERNEL_SIZE - 1, 0 to C_KERNEL_SIZE - 1) := (others => (others => (others => '0')));
 
   -- for channel repeater
   signal sl_repeater_valid_out : std_logic := '0';
@@ -77,11 +73,12 @@ architecture behavioral of window_ctrl is
 begin
 
   gen_window_buffer : if C_KERNEL_SIZE = 1 generate
-    sl_selector_valid_out     <= isl_valid;
+    sl_selector_valid_out_d2  <= isl_valid;
     a_selector_data_out(0, 0) <= islv_data;
   else generate
     -- line buffer
-    i_line_buffer : entity window_buffer_lib.line_buffer
+    -- one cycle delay
+    i_line_buffer : entity window_ctrl_lib.line_buffer
       generic map (
         C_BITWIDTH    => C_BITWIDTH,
         C_CH          => C_CH_IN,
@@ -97,7 +94,8 @@ begin
       );
 
     -- window buffer
-    i_window_buffer : entity window_buffer_lib.window_buffer
+    -- one cycle delay
+    i_window_buffer : entity window_ctrl_lib.window_buffer
       generic map (
         C_BITWIDTH    => C_BITWIDTH,
         C_CH          => C_CH_IN,
@@ -121,12 +119,19 @@ begin
     --    3. every C_STRIDE column
     --    4. when the window is not shifted at end/start of line
     -------------------------------------------------------
+    sl_flush <= '1' when int_pixel_cnt < (C_KERNEL_SIZE - 1) * C_IMG_WIDTH + C_KERNEL_SIZE - 1 else
+                '0';
+
     proc_selector : process (isl_clk) is
     begin
 
       if (rising_edge(isl_clk)) then
-        if (sl_selector_valid_in = '1' and
-            int_pixel_in_cnt >= (C_KERNEL_SIZE - 1) * C_IMG_WIDTH + C_KERNEL_SIZE - 1 and
+        -- The delay is caused by line and window buffer.
+        sl_selector_valid_out_d1 <= sl_selector_valid_out;
+        sl_selector_valid_out_d2 <= sl_selector_valid_out_d1;
+
+        if (isl_valid = '1' and
+            sl_flush = '0' and
             (int_row + 1 - C_KERNEL_SIZE + C_STRIDE) mod C_STRIDE = 0 and
             (int_col + 1 - C_KERNEL_SIZE + C_STRIDE) mod C_STRIDE = 0 and
             int_col + 1 > C_KERNEL_SIZE - 1) then
@@ -144,7 +149,7 @@ begin
 
   gen_channel_repeater : if C_CH_OUT > 1 generate
     -- channel repeater
-    i_channel_repeater : entity window_buffer_lib.channel_repeater
+    i_channel_repeater : entity window_ctrl_lib.channel_repeater
       generic map (
         C_BITWIDTH    => C_BITWIDTH,
         C_CH          => C_CH_IN,
@@ -155,7 +160,7 @@ begin
       )
       port map (
         isl_clk   => isl_clk,
-        isl_valid => sl_selector_valid_out,
+        isl_valid => sl_selector_valid_out_d2,
         ia_data   => a_selector_data_out,
         oa_data   => a_repeater_data_out,
         osl_valid => sl_repeater_valid_out,
@@ -163,66 +168,51 @@ begin
       );
 
   else generate
-    sl_repeater_valid_out  <= sl_selector_valid_out;
+    sl_repeater_valid_out  <= sl_selector_valid_out_d2;
     a_repeater_data_out(0) <= a_selector_data_out;
     sl_repeater_rdy        <= '1';
   end generate gen_channel_repeater;
 
-  proc_cnt : process (isl_clk) is
-  begin
+  i_pixel_counter_in : entity util.pixel_counter(single_process)
+    generic map (
+      C_HEIGHT  => C_IMG_HEIGHT,
+      C_WIDTH   => C_IMG_WIDTH,
+      C_CHANNEL => C_CH_IN
+    )
+    port map (
+      isl_clk      => isl_clk,
+      isl_reset    => isl_start,
+      isl_valid    => isl_valid,
+      oint_pixel   => int_pixel_cnt,
+      oint_row     => int_row,
+      oint_column  => int_col,
+      oint_channel => open
+    );
 
-    if (rising_edge(isl_clk)) then
-      if (isl_start = '1') then
-        -- have to be resetted at start because of odd kernels (size: 3, stride: 2)
-        -- because image dimensions aren't fitting kernel stride
-        int_ch_in_cnt     <= 0;
-        int_pixel_in_cnt  <= 0;
-        int_pixel_out_cnt <= 0;
-        int_row           <= 0;
-        int_col           <= 0;
-      else
-        if (sl_selector_valid_in = '1') then
-          if (int_ch_in_cnt < C_CH_IN - 1) then
-            int_ch_in_cnt <= int_ch_in_cnt + 1;
-          else
-            int_ch_in_cnt    <= 0;
-            int_pixel_in_cnt <= int_pixel_in_cnt + 1;
-            if (int_col < C_IMG_WIDTH - 1) then
-              int_col <= int_col + 1;
-            else
-              int_col <= 0;
-              if (int_row < C_IMG_HEIGHT - 1) then
-                int_row <= int_row + 1;
-              else
-                int_row <= 0;
-              end if;
-            end if;
-          end if;
-        end if;
+  -- synthesis translate off
+  i_pixel_counter_out : entity util.pixel_counter(single_process)
+    generic map (
+      C_HEIGHT  => 1,
+      C_WIDTH   => C_CH_OUT,
+      C_CHANNEL => C_CH_IN
+    )
+    port map (
+      isl_clk      => isl_clk,
+      isl_reset    => isl_start,
+      isl_valid    => sl_repeater_valid_out,
+      oint_pixel   => open,
+      oint_row     => open,
+      oint_column  => open,
+      oint_channel => open
+    );
 
-        -- for debugging
-        if (osl_valid = '1') then
-          if (int_ch_out_cnt < C_CH_IN - 1) then
-            int_ch_out_cnt <= int_ch_out_cnt + 1;
-          else
-            int_ch_out_cnt <= 0;
-            if (int_repetition_cnt < C_CH_OUT - 1) then
-              int_repetition_cnt <= int_repetition_cnt + 1;
-            else
-              int_repetition_cnt <= 0;
-              int_pixel_out_cnt  <= int_pixel_out_cnt + 1;
-            end if;
-          end if;
-        end if;
-      end if;
-    end if;
-
-  end process proc_cnt;
+  -- synthesis translate on
 
   oslv_data <= array_to_slv(a_repeater_data_out);
   osl_valid <= sl_repeater_valid_out;
-  -- use sl_lb_valid_out and sl_wb_valid_out to get two less cycles of sl_rdy = '1'
-  -- else too much data would get sent in
-  osl_rdy <= sl_repeater_rdy and not (sl_lb_valid_out or sl_wb_valid_out);
+  -- Use isl_valid, sl_lb_valid_out and sl_wb_valid_out to get three less cycles of the ready signal.
+  -- Else too much data would get sent in.
+  osl_rdy <= '1' when sl_flush else
+             sl_repeater_rdy and not (isl_valid or sl_lb_valid_out or sl_wb_valid_out);
 
 end architecture behavioral;
